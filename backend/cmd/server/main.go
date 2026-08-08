@@ -17,7 +17,7 @@ import (
 
 func main() {
 	cfg := config.Load()
-	if len(cfg.GatewaySecretKey) < 32 || len(cfg.GatewayUpstreamSecretKey) < 32 || len(cfg.PeopleClientSecret) < 32 {
+	if len(cfg.GatewaySecretKey) < 32 || len(cfg.GatewayUpstreamSecretKey) < 32 || len(cfg.PeopleClientSecret) < 32 || len(cfg.PermissionClientSecret) < 32 {
 		log.Fatal("Blog Gateway 与 OAuth 密钥至少需要 32 个字符")
 	}
 	database, err := store.Open(cfg.DatabaseDSN)
@@ -35,7 +35,7 @@ func main() {
 		log.Fatalf("初始化 Blog 文件存储失败: %v", err)
 	}
 	service := blog.New(database)
-	identities := identity.New(database, cfg.PermissionAPIBaseURL, cfg.PeopleAPIBaseURL, cfg.PeopleAuthorizeURL, cfg.PeopleClientID, cfg.PeopleClientSecret, cfg.OAuthRedirectURIs)
+	identities := identity.New(database, cfg.PermissionAPIBaseURL, cfg.PermissionClientID, cfg.PermissionClientSecret, cfg.PeopleAPIBaseURL, cfg.PeopleAuthorizeURL, cfg.PeopleClientID, cfg.PeopleClientSecret, cfg.OAuthRedirectURIs)
 	gatewayClient := gateway.New(cfg.GatewayInnerBaseURL, cfg.GatewayAccessKey, cfg.GatewaySecretKey)
 	verifier := gateway.NewVerifier(cfg.GatewayUpstreamAccessKey, cfg.GatewayUpstreamSecretKey, 5*time.Minute)
 	server := api.New(cfg.Address, cfg.PublicBaseURL, cfg.AllowedOrigins, cfg.MaxUploadBytes, service, identities, gatewayClient, verifier, objects)

@@ -1,5 +1,5 @@
 import axios from 'axios'
-import type { Category, Comment, Dashboard, Media, Post, PostInput, PostPage, User } from '@/types'
+import type { Category, Comment, Dashboard, LeaderboardEntry, Media, Post, PostInput, PostPage, User } from '@/types'
 
 const baseURL = import.meta.env.VITE_BLOG_API_BASE_URL || '/api/v1'
 const tokenKey = 'blog_access_token'
@@ -27,6 +27,7 @@ export const blogApi = {
   updatePost: (id: string, input: PostInput) => unwrap<Post>(client.put(`/posts/${id}`, input)),
   publishPost: (id: string) => unwrap<Post>(client.post(`/posts/${id}/publish`)),
   deletePost: (id: string) => unwrap<{ deleted: boolean }>(client.delete(`/posts/${id}`)),
+  ratePost: (id: string, stars: number) => unwrap<{ stars: number; ratingCount: number; ratingAverage: number }>(client.post(`/posts/${id}/rating`, { stars })),
   categories: () => unwrap<Category[]>(client.get('/categories')),
   createCategory: (input: Pick<Category, 'name' | 'slug' | 'description'>) => unwrap<Category>(client.post('/categories', input)),
   updateCategory: (id: string, input: Pick<Category, 'name' | 'slug' | 'description'>) => unwrap<Category>(client.put(`/categories/${id}`, input)),
@@ -35,4 +36,9 @@ export const blogApi = {
   createComment: (postId: string, content: string) => unwrap<Comment>(client.post(`/posts/${postId}/comments`, { content })),
   deleteComment: (id: string) => unwrap<{ deleted: boolean }>(client.delete(`/comments/${id}`)),
   upload: (file: File) => { const data = new FormData(); data.append('file', file); return unwrap<Media>(client.post('/media', data, { headers: { 'Content-Type': 'multipart/form-data' } })) },
+  reviews: () => unwrap<Post[]>(client.get('/reviews')),
+  approve: (id: string) => unwrap<Post>(client.post(`/reviews/${id}/approve`)),
+  reject: (id: string, note: string) => unwrap<Post>(client.post(`/reviews/${id}/reject`, { note })),
+  leaderboard: () => unwrap<LeaderboardEntry[]>(client.get('/leaderboard')),
+  recommendations: () => unwrap<Post[]>(client.get('/recommendations')),
 }

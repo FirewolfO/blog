@@ -6,25 +6,62 @@ const (
 	PostDraft     = "draft"
 	PostPublished = "published"
 	PostArchived  = "archived"
+
+	ReviewDraft    = "draft"
+	ReviewPending  = "pending"
+	ReviewApproved = "approved"
+	ReviewRejected = "rejected"
 )
 
 type Post struct {
+	ID                   string     `gorm:"primaryKey;size:40" json:"id"`
+	Title                string     `gorm:"size:180;not null" json:"title"`
+	Slug                 string     `gorm:"size:200;uniqueIndex;not null" json:"slug"`
+	Excerpt              string     `gorm:"size:500" json:"excerpt"`
+	Content              string     `gorm:"type:text;not null" json:"content"`
+	CoverImageURL        string     `gorm:"size:500" json:"coverImageUrl"`
+	Status               string     `gorm:"size:20;index;not null" json:"status"`
+	CategoryID           string     `gorm:"size:40;index" json:"categoryId"`
+	Category             *Category  `gorm:"foreignKey:CategoryID" json:"category,omitempty"`
+	TagsJSON             string     `gorm:"column:tags;type:text" json:"-"`
+	AuthorID             string     `gorm:"size:80;index;not null" json:"authorId"`
+	AuthorName           string     `gorm:"size:120;not null" json:"authorName"`
+	ReviewStatus         string     `gorm:"size:20;index;not null;default:draft" json:"reviewStatus"`
+	ReviewNote           string     `gorm:"size:500" json:"reviewNote,omitempty"`
+	PendingRevisionID    string     `gorm:"size:40;index" json:"-"`
+	PublishedAt          *time.Time `json:"publishedAt"`
+	CreatedAt            time.Time  `json:"createdAt"`
+	UpdatedAt            time.Time  `json:"updatedAt"`
+	CommentCount         int64      `gorm:"-" json:"commentCount"`
+	RatingCount          int64      `gorm:"-" json:"ratingCount"`
+	RatingAverage        float64    `gorm:"-" json:"ratingAverage"`
+	MyRating             int        `gorm:"-" json:"myRating"`
+	HasPendingChanges    bool       `gorm:"-" json:"hasPendingChanges"`
+	CanEdit              bool       `gorm:"-" json:"canEdit"`
+	CanDelete            bool       `gorm:"-" json:"canDelete"`
+	RecommendationReason string     `gorm:"-" json:"recommendationReason,omitempty"`
+	Tags                 []string   `gorm:"-" json:"tags"`
+}
+
+type PostRevision struct {
 	ID            string     `gorm:"primaryKey;size:40" json:"id"`
+	PostID        string     `gorm:"size:40;index;not null" json:"postId"`
 	Title         string     `gorm:"size:180;not null" json:"title"`
-	Slug          string     `gorm:"size:200;uniqueIndex;not null" json:"slug"`
+	Slug          string     `gorm:"size:200;not null" json:"slug"`
 	Excerpt       string     `gorm:"size:500" json:"excerpt"`
 	Content       string     `gorm:"type:text;not null" json:"content"`
 	CoverImageURL string     `gorm:"size:500" json:"coverImageUrl"`
-	Status        string     `gorm:"size:20;index;not null" json:"status"`
+	Status        string     `gorm:"size:20;not null" json:"status"`
 	CategoryID    string     `gorm:"size:40;index" json:"categoryId"`
-	Category      *Category  `gorm:"foreignKey:CategoryID" json:"category,omitempty"`
 	TagsJSON      string     `gorm:"column:tags;type:text" json:"-"`
-	AuthorID      string     `gorm:"size:80;index;not null" json:"authorId"`
-	AuthorName    string     `gorm:"size:120;not null" json:"authorName"`
-	PublishedAt   *time.Time `json:"publishedAt"`
+	SubmittedBy   string     `gorm:"size:80;index;not null" json:"submittedBy"`
+	SubmittedName string     `gorm:"size:120;not null" json:"submittedName"`
+	ReviewStatus  string     `gorm:"size:20;index;not null" json:"reviewStatus"`
+	ReviewNote    string     `gorm:"size:500" json:"reviewNote,omitempty"`
+	ReviewedBy    string     `gorm:"size:80" json:"reviewedBy,omitempty"`
+	ReviewedAt    *time.Time `json:"reviewedAt,omitempty"`
 	CreatedAt     time.Time  `json:"createdAt"`
 	UpdatedAt     time.Time  `json:"updatedAt"`
-	CommentCount  int64      `gorm:"-" json:"commentCount"`
 	Tags          []string   `gorm:"-" json:"tags"`
 }
 
@@ -45,6 +82,16 @@ type Comment struct {
 	AuthorID   string    `gorm:"size:80;index;not null" json:"authorId"`
 	AuthorName string    `gorm:"size:120;not null" json:"authorName"`
 	CreatedAt  time.Time `json:"createdAt"`
+	CanDelete  bool      `gorm:"-" json:"canDelete"`
+}
+
+type Rating struct {
+	ID        string    `gorm:"primaryKey;size:40" json:"id"`
+	PostID    string    `gorm:"size:40;uniqueIndex:idx_post_rater;not null" json:"postId"`
+	RaterID   string    `gorm:"size:80;uniqueIndex:idx_post_rater;not null" json:"raterId"`
+	Stars     int       `gorm:"not null" json:"stars"`
+	CreatedAt time.Time `json:"createdAt"`
+	UpdatedAt time.Time `json:"updatedAt"`
 }
 
 type Media struct {

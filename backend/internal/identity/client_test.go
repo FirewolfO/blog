@@ -35,7 +35,7 @@ func TestPeopleOAuthAndPermissionFallback(t *testing.T) {
 	}
 	defer database.Close()
 	redirectURI := "http://localhost:5179/oauth/callback"
-	client := New(database, server.URL+"/permission", server.URL+"/people", "http://people.local/oauth/authorize", "blog-ui", "secret", []string{redirectURI})
+	client := New(database, server.URL+"/permission", "gateway-admin", "permission-secret-at-least-32-bytes", server.URL+"/people", "http://people.local/oauth/authorize", "blog-ui", "secret", []string{redirectURI})
 	authorize, err := client.AuthorizationURL(redirectURI)
 	if err != nil {
 		t.Fatal(err)

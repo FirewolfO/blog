@@ -15,7 +15,7 @@ func Open(dsn string) (*Store, error) {
 	if err != nil {
 		return nil, fmt.Errorf("open blog database: %w", err)
 	}
-	if err := db.AutoMigrate(&model.Post{}, &model.Category{}, &model.Comment{}, &model.Media{}, &model.Session{}, &model.OAuthState{}); err != nil {
+	if err := db.AutoMigrate(&model.Post{}, &model.PostRevision{}, &model.Category{}, &model.Comment{}, &model.Rating{}, &model.Media{}, &model.Session{}, &model.OAuthState{}); err != nil {
 		return nil, fmt.Errorf("migrate blog database: %w", err)
 	}
 	return &Store{DB: db}, nil

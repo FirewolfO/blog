@@ -1,15 +1,19 @@
 package identity
 
 import (
+	"bytes"
 	"context"
+	"crypto/hmac"
 	"crypto/rand"
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"net/http"
 	"net/url"
+	"strconv"
 	"strings"
 	"time"
 
@@ -24,6 +28,8 @@ var ErrUnauthorized = errors.New("unauthorized")
 type Client struct {
 	database                   *store.Store
 	permissionBase, peopleBase string
+	permissionClientID         string
+	permissionClientSecret     string
 	peopleAuthorize, clientID  string
 	clientSecret               string
 	redirectURIs               map[string]bool
@@ -36,12 +42,12 @@ type SessionResult struct {
 	User        blog.Identity `json:"user"`
 }
 
-func New(database *store.Store, permissionBase, peopleBase, peopleAuthorize, clientID, clientSecret string, redirectURIs []string) *Client {
+func New(database *store.Store, permissionBase, permissionClientID, permissionClientSecret, peopleBase, peopleAuthorize, clientID, clientSecret string, redirectURIs []string) *Client {
 	allowed := make(map[string]bool, len(redirectURIs))
 	for _, item := range redirectURIs {
 		allowed[item] = true
 	}
-	return &Client{database: database, permissionBase: strings.TrimRight(permissionBase, "/"), peopleBase: strings.TrimRight(peopleBase, "/"), peopleAuthorize: peopleAuthorize, clientID: clientID, clientSecret: clientSecret, redirectURIs: allowed, httpClient: &http.Client{Timeout: 10 * time.Second}}
+	return &Client{database: database, permissionBase: strings.TrimRight(permissionBase, "/"), permissionClientID: permissionClientID, permissionClientSecret: permissionClientSecret, peopleBase: strings.TrimRight(peopleBase, "/"), peopleAuthorize: peopleAuthorize, clientID: clientID, clientSecret: clientSecret, redirectURIs: allowed, httpClient: &http.Client{Timeout: 10 * time.Second}}
 }
 
 func (c *Client) AuthorizationURL(redirectURI string) (string, error) {
@@ -79,6 +85,7 @@ func (c *Client) Exchange(ctx context.Context, code, state, redirectURI string) 
 	if err != nil {
 		return nil, err
 	}
+	employee.Permissions, _ = c.permissions(ctx, employee.Username)
 	token, err := randomToken(32)
 	if err != nil {
 		return nil, err
@@ -98,11 +105,71 @@ func (c *Client) Authenticate(ctx context.Context, token string) (*blog.Identity
 	}
 	var session model.Session
 	if err := c.database.DB.Where("token_hash = ? AND expires_at > ?", hash(token), time.Now().UTC()).First(&session).Error; err == nil {
-		return &blog.Identity{ID: session.UserID, Username: session.Username, DisplayName: session.DisplayName, Source: "people"}, nil
+		result := &blog.Identity{ID: session.UserID, Username: session.Username, DisplayName: session.DisplayName, Source: "people"}
+		// Permission outages never prevent regular authors from using Blog, but
+		// elevated administrator/reviewer capabilities fail closed.
+		result.Permissions, _ = c.permissions(ctx, session.Username)
+		return result, nil
 	} else if !errors.Is(err, gorm.ErrRecordNotFound) {
 		return nil, err
 	}
 	return c.permissionIdentity(ctx, token)
+}
+
+func (c *Client) permissions(ctx context.Context, username string) ([]string, error) {
+	body, err := json.Marshal(map[string]any{
+		"principal":   map[string]string{"type": "user", "identifier": username},
+		"permissions": []string{blog.PermissionView, blog.PermissionManage, blog.PermissionReview},
+	})
+	if err != nil {
+		return nil, err
+	}
+	target := c.permissionBase + "/openapi/authorize"
+	request, err := http.NewRequestWithContext(ctx, http.MethodPost, target, bytes.NewReader(body))
+	if err != nil {
+		return nil, err
+	}
+	timestamp := strconv.FormatInt(time.Now().UTC().Unix(), 10)
+	nonceBytes := make([]byte, 16)
+	if _, err := rand.Read(nonceBytes); err != nil {
+		return nil, err
+	}
+	nonce := hex.EncodeToString(nonceBytes)
+	payloadSum := sha256.Sum256(body)
+	payloadHash := hex.EncodeToString(payloadSum[:])
+	canonical := strings.Join([]string{http.MethodPost, request.URL.EscapedPath(), request.URL.RawQuery, timestamp, nonce, payloadHash}, "\n")
+	mac := hmac.New(sha256.New, []byte(c.permissionClientSecret))
+	_, _ = mac.Write([]byte(canonical))
+	signature := hex.EncodeToString(mac.Sum(nil))
+	request.Header.Set("Authorization", "Permission-HMAC-SHA256 Credential="+c.permissionClientID+",Signature="+signature)
+	request.Header.Set("Content-Type", "application/json")
+	request.Header.Set("X-Permission-Timestamp", timestamp)
+	request.Header.Set("X-Permission-Nonce", nonce)
+	request.Header.Set("X-Permission-Content-SHA256", payloadHash)
+	response, err := c.httpClient.Do(request)
+	if err != nil {
+		return nil, err
+	}
+	defer response.Body.Close()
+	if response.StatusCode != http.StatusOK {
+		message, _ := io.ReadAll(io.LimitReader(response.Body, 1024))
+		return nil, fmt.Errorf("Permission authorize returned %d: %s", response.StatusCode, strings.TrimSpace(string(message)))
+	}
+	var payload struct {
+		Data struct {
+			Permissions map[string]bool `json:"permissions"`
+		} `json:"data"`
+	}
+	if err := json.NewDecoder(response.Body).Decode(&payload); err != nil {
+		return nil, err
+	}
+	result := []string{}
+	for _, code := range []string{blog.PermissionView, blog.PermissionManage, blog.PermissionReview} {
+		if payload.Data.Permissions[code] {
+			result = append(result, code)
+		}
+	}
+	return result, nil
 }
 
 func (c *Client) Logout(token string) error {

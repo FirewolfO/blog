@@ -5,10 +5,12 @@ import { Box, ChatDotRound, Delete, Edit, Promotion, Search } from '@element-plu
 import { apiMessage, blogApi } from '@/api'
 import type { Category, Post, PostPage } from '@/types'
 import { formatDate, statusLabel } from '@/utils/format'
+import { useAuthStore } from '@/stores/auth'
+const auth = useAuthStore()
 const loading = ref(false); const page = ref<PostPage>({ items: [], total: 0, page: 1, pageSize: 20 }); const categories = ref<Category[]>([])
-const filters = reactive({ q: '', status: '', categoryId: '', page: 1, pageSize: 20 })
+const filters = reactive({ q: '', status: '', categoryId: '', scope: auth.isAdmin ? 'all' : 'mine', page: 1, pageSize: 20 })
 async function load() { loading.value = true; try { page.value = await blogApi.posts(filters) } catch (error) { ElMessage.error(apiMessage(error, '文章列表加载失败')) } finally { loading.value = false } }
-async function publish(post: Post) { try { await ElMessageBox.confirm(`确认发布《${post.title}》？`, '发布文章', { type: 'warning' }); await blogApi.publishPost(post.id); ElMessage.success('文章已发布'); await load() } catch (error) { if (error !== 'cancel' && error !== 'close') ElMessage.error(apiMessage(error, '发布失败')) } }
+async function publish(post: Post) { try { await ElMessageBox.confirm(`确认提交《${post.title}》审核？`, '提交审核', { type: 'warning' }); await blogApi.publishPost(post.id); ElMessage.success('已提交审核'); await load() } catch (error) { if (error !== 'cancel' && error !== 'close') ElMessage.error(apiMessage(error, '提交失败')) } }
 async function archive(post: Post) { try { const current = await blogApi.post(post.id); await blogApi.updatePost(post.id, { ...current, status: 'archived' }); ElMessage.success('文章已归档'); await load() } catch (error) { ElMessage.error(apiMessage(error, '归档失败')) } }
 async function remove(post: Post) { try { await ElMessageBox.confirm(`删除后无法恢复，确认删除《${post.title}》？`, '删除文章', { type: 'warning' }); await blogApi.deletePost(post.id); ElMessage.success('文章已删除'); await load() } catch (error) { if (error !== 'cancel' && error !== 'close') ElMessage.error(apiMessage(error, '删除失败')) } }
 onMounted(async () => { try { categories.value = await blogApi.categories() } catch { categories.value = [] }; await load() })

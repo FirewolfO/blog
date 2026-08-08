@@ -17,6 +17,8 @@ type Config struct {
 	GatewayUpstreamAccessKey string
 	GatewayUpstreamSecretKey string
 	PermissionAPIBaseURL     string
+	PermissionClientID       string
+	PermissionClientSecret   string
 	PeopleAPIBaseURL         string
 	PeopleAuthorizeURL       string
 	PeopleClientID           string
@@ -42,6 +44,8 @@ func Load() Config {
 		GatewayUpstreamAccessKey: env("BLOG_GATEWAY_UPSTREAM_ACCESS_KEY", "gwak_blog_console_local"),
 		GatewayUpstreamSecretKey: env("BLOG_GATEWAY_UPSTREAM_SECRET_KEY", "local-development-blog-gateway-secret-key"),
 		PermissionAPIBaseURL:     strings.TrimRight(env("BLOG_PERMISSION_API_BASE_URL", "http://127.0.0.1:8081/api/v1"), "/"),
+		PermissionClientID:       env("BLOG_PERMISSION_CLIENT_ID", "gateway-admin"),
+		PermissionClientSecret:   env("BLOG_PERMISSION_CLIENT_SECRET", "local-development-gateway-permission-secret"),
 		PeopleAPIBaseURL:         strings.TrimRight(env("BLOG_PEOPLE_API_BASE_URL", "http://127.0.0.1:8082/api/open/people"), "/"),
 		PeopleAuthorizeURL:       env("BLOG_PEOPLE_AUTHORIZE_URL", "http://localhost:5177/oauth/authorize"),
 		PeopleClientID:           env("BLOG_PEOPLE_CLIENT_ID", "blog-ui"),

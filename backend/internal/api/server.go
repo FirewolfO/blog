@@ -73,6 +73,7 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("PUT /api/v1/inner/posts/{id}", s.internal(s.updatePost))
 	mux.HandleFunc("DELETE /api/v1/inner/posts/{id}", s.internal(s.deletePost))
 	mux.HandleFunc("POST /api/v1/inner/posts/{id}/publish", s.internal(s.publishPost))
+	mux.HandleFunc("POST /api/v1/inner/posts/{id}/rating", s.internal(s.ratePost))
 	mux.HandleFunc("GET /api/v1/inner/posts/{id}/comments", s.internal(s.listComments))
 	mux.HandleFunc("POST /api/v1/inner/posts/{id}/comments", s.internal(s.createComment))
 	mux.HandleFunc("DELETE /api/v1/inner/comments/{id}", s.internal(s.deleteComment))
@@ -81,6 +82,11 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("PUT /api/v1/inner/categories/{id}", s.internal(s.updateCategory))
 	mux.HandleFunc("DELETE /api/v1/inner/categories/{id}", s.internal(s.deleteCategory))
 	mux.HandleFunc("POST /api/v1/inner/media", s.internal(s.uploadMedia))
+	mux.HandleFunc("GET /api/v1/inner/reviews", s.internal(s.listReviews))
+	mux.HandleFunc("POST /api/v1/inner/reviews/{id}/approve", s.internal(s.approvePost))
+	mux.HandleFunc("POST /api/v1/inner/reviews/{id}/reject", s.internal(s.rejectPost))
+	mux.HandleFunc("GET /api/v1/inner/leaderboard", s.internal(s.leaderboard))
+	mux.HandleFunc("GET /api/v1/inner/recommendations", s.internal(s.recommendations))
 	mux.HandleFunc("/api/v1/", s.proxy)
 	return s.cors(s.requestID(mux))
 }
@@ -146,7 +152,7 @@ func (s *Server) proxy(writer http.ResponseWriter, request *http.Request) {
 		fail(writer, request, http.StatusUnauthorized, "UNAUTHORIZED", "登录状态无效或已过期")
 		return
 	}
-	if permission := requiredPermission(request); !actor.Can(permission) {
+	if !authorizedRequest(*actor, request) {
 		fail(writer, request, http.StatusForbidden, "FORBIDDEN", "没有 Blog 操作权限")
 		return
 	}
@@ -220,14 +226,14 @@ func (s *Server) logout(writer http.ResponseWriter, request *http.Request) {
 }
 
 func (s *Server) dashboard(writer http.ResponseWriter, request *http.Request) {
-	result, err := s.blog.Dashboard()
+	result, err := s.blog.Dashboard(actor(request))
 	respond(writer, request, result, err)
 }
 
 func (s *Server) listPosts(writer http.ResponseWriter, request *http.Request) {
 	page, _ := strconv.Atoi(request.URL.Query().Get("page"))
 	pageSize, _ := strconv.Atoi(request.URL.Query().Get("pageSize"))
-	result, err := s.blog.ListPosts(request.URL.Query().Get("q"), request.URL.Query().Get("status"), request.URL.Query().Get("categoryId"), page, pageSize)
+	result, err := s.blog.ListPosts(actor(request), request.URL.Query().Get("q"), request.URL.Query().Get("status"), request.URL.Query().Get("categoryId"), request.URL.Query().Get("scope"), page, pageSize)
 	respond(writer, request, result, err)
 }
 
@@ -245,7 +251,7 @@ func (s *Server) createPost(writer http.ResponseWriter, request *http.Request) {
 }
 
 func (s *Server) getPost(writer http.ResponseWriter, request *http.Request) {
-	result, err := s.blog.GetPost(request.PathValue("id"))
+	result, err := s.blog.GetPost(actor(request), request.PathValue("id"))
 	respond(writer, request, result, err)
 }
 func (s *Server) updatePost(writer http.ResponseWriter, request *http.Request) {
@@ -257,11 +263,11 @@ func (s *Server) updatePost(writer http.ResponseWriter, request *http.Request) {
 	respond(writer, request, result, err)
 }
 func (s *Server) publishPost(writer http.ResponseWriter, request *http.Request) {
-	result, err := s.blog.PublishPost(request.PathValue("id"))
+	result, err := s.blog.PublishPost(request.PathValue("id"), actor(request))
 	respond(writer, request, result, err)
 }
 func (s *Server) deletePost(writer http.ResponseWriter, request *http.Request) {
-	err := s.blog.DeletePost(request.PathValue("id"))
+	err := s.blog.DeletePost(request.PathValue("id"), actor(request))
 	if err != nil {
 		handleError(writer, request, err)
 		return
@@ -274,6 +280,10 @@ func (s *Server) listCategories(writer http.ResponseWriter, request *http.Reques
 	respond(writer, request, result, err)
 }
 func (s *Server) createCategory(writer http.ResponseWriter, request *http.Request) {
+	if !actor(request).IsAdmin() {
+		handleError(writer, request, blog.ErrForbidden)
+		return
+	}
 	var input blog.CategoryInput
 	if !decodeJSON(writer, request, &input) {
 		return
@@ -286,6 +296,10 @@ func (s *Server) createCategory(writer http.ResponseWriter, request *http.Reques
 	write(writer, request, http.StatusCreated, "CREATED", "创建成功", result)
 }
 func (s *Server) updateCategory(writer http.ResponseWriter, request *http.Request) {
+	if !actor(request).IsAdmin() {
+		handleError(writer, request, blog.ErrForbidden)
+		return
+	}
 	var input blog.CategoryInput
 	if !decodeJSON(writer, request, &input) {
 		return
@@ -294,6 +308,10 @@ func (s *Server) updateCategory(writer http.ResponseWriter, request *http.Reques
 	respond(writer, request, result, err)
 }
 func (s *Server) deleteCategory(writer http.ResponseWriter, request *http.Request) {
+	if !actor(request).IsAdmin() {
+		handleError(writer, request, blog.ErrForbidden)
+		return
+	}
 	err := s.blog.DeleteCategory(request.PathValue("id"))
 	if err != nil {
 		handleError(writer, request, err)
@@ -303,7 +321,7 @@ func (s *Server) deleteCategory(writer http.ResponseWriter, request *http.Reques
 }
 
 func (s *Server) listComments(writer http.ResponseWriter, request *http.Request) {
-	result, err := s.blog.ListComments(request.PathValue("id"))
+	result, err := s.blog.ListComments(request.PathValue("id"), actor(request))
 	respond(writer, request, result, err)
 }
 func (s *Server) createComment(writer http.ResponseWriter, request *http.Request) {
@@ -321,12 +339,52 @@ func (s *Server) createComment(writer http.ResponseWriter, request *http.Request
 	write(writer, request, http.StatusCreated, "CREATED", "评论成功", result)
 }
 func (s *Server) deleteComment(writer http.ResponseWriter, request *http.Request) {
-	err := s.blog.DeleteComment(request.PathValue("id"))
+	err := s.blog.DeleteComment(request.PathValue("id"), actor(request))
 	if err != nil {
 		handleError(writer, request, err)
 		return
 	}
 	success(writer, request, map[string]bool{"deleted": true})
+}
+
+func (s *Server) ratePost(writer http.ResponseWriter, request *http.Request) {
+	var input struct {
+		Stars int `json:"stars"`
+	}
+	if !decodeJSON(writer, request, &input) {
+		return
+	}
+	result, err := s.blog.RatePost(request.PathValue("id"), actor(request), input.Stars)
+	respond(writer, request, result, err)
+}
+
+func (s *Server) listReviews(writer http.ResponseWriter, request *http.Request) {
+	result, err := s.blog.ListReviews(actor(request))
+	respond(writer, request, result, err)
+}
+func (s *Server) approvePost(writer http.ResponseWriter, request *http.Request) {
+	result, err := s.blog.ApprovePost(request.PathValue("id"), actor(request))
+	respond(writer, request, result, err)
+}
+func (s *Server) rejectPost(writer http.ResponseWriter, request *http.Request) {
+	var input struct {
+		Note string `json:"note"`
+	}
+	if !decodeJSON(writer, request, &input) {
+		return
+	}
+	result, err := s.blog.RejectPost(request.PathValue("id"), actor(request), input.Note)
+	respond(writer, request, result, err)
+}
+func (s *Server) leaderboard(writer http.ResponseWriter, request *http.Request) {
+	limit, _ := strconv.Atoi(request.URL.Query().Get("limit"))
+	result, err := s.blog.Leaderboard(limit)
+	respond(writer, request, result, err)
+}
+func (s *Server) recommendations(writer http.ResponseWriter, request *http.Request) {
+	limit, _ := strconv.Atoi(request.URL.Query().Get("limit"))
+	result, err := s.blog.Recommendations(actor(request), limit)
+	respond(writer, request, result, err)
 }
 
 func (s *Server) uploadMedia(writer http.ResponseWriter, request *http.Request) {
@@ -418,10 +476,21 @@ func allowedImageType(value string) bool {
 }
 
 func requiredPermission(request *http.Request) string {
-	if request.Method == http.MethodGet || (request.Method == http.MethodPost && strings.HasSuffix(request.URL.Path, "/comments")) {
-		return "svc.inner.blog:view"
+	if strings.HasPrefix(request.URL.Path, "/api/v1/reviews") {
+		return blog.PermissionReview
 	}
-	return "svc.inner.blog:manage"
+	if strings.HasPrefix(request.URL.Path, "/api/v1/categories") && request.Method != http.MethodGet {
+		return blog.PermissionManage
+	}
+	return blog.PermissionView
+}
+
+func authorizedRequest(actor blog.Identity, request *http.Request) bool {
+	permission := requiredPermission(request)
+	if permission == blog.PermissionReview && actor.IsAdmin() {
+		return true
+	}
+	return actor.Can(permission)
 }
 
 func decodeJSON(writer http.ResponseWriter, request *http.Request, target any) bool {
@@ -460,6 +529,8 @@ func handleError(writer http.ResponseWriter, request *http.Request, err error) {
 		fail(writer, request, http.StatusNotFound, "NOT_FOUND", "资源不存在")
 	case errors.Is(err, blog.ErrConflict):
 		fail(writer, request, http.StatusConflict, "CONFLICT", err.Error())
+	case errors.Is(err, blog.ErrForbidden):
+		fail(writer, request, http.StatusForbidden, "FORBIDDEN", "没有执行该操作的权限")
 	default:
 		log.Printf("Blog request %s failed: %v", request.Header.Get("X-Request-ID"), err)
 		fail(writer, request, http.StatusInternalServerError, "INTERNAL_ERROR", "服务内部错误")

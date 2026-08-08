@@ -7,7 +7,8 @@
     "dev": "vite --host 0.0.0.0",
     "build": "vue-tsc -b && vite build",
     "typecheck": "vue-tsc -b",
-    "test": "vitest run"
+    "test": "vitest run --exclude tests/visual.spec.ts",
+    "test:visual": "playwright test tests/visual.spec.ts"
   },
   "dependencies": {
     "@element-plus/icons-vue": "^2.3.1",
@@ -15,11 +16,13 @@
     "dompurify": "^3.2.6",
     "element-plus": "^2.14.3",
     "marked": "^16.4.1",
+    "md-editor-v3": "^6.5.4",
     "pinia": "^3.0.3",
     "vue": "^3.5.17",
     "vue-router": "^4.5.1"
   },
   "devDependencies": {
+    "@playwright/test": "^1.62.1",
     "@tsconfig/node22": "^22.0.5",
     "@types/node": "^22.20.1",
     "@vitejs/plugin-vue": "^6.0.1",

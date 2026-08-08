@@ -4,6 +4,7 @@ backend/blog.db-*
 backend/blog-server
 frontend/dist/
 frontend/node_modules/
+frontend/test-results/
 *.log
 *.pid
 .env
