@@ -1,0 +1,9 @@
+.runtime/
+backend/blog.db
+backend/blog.db-*
+backend/blog-server
+frontend/dist/
+frontend/node_modules/
+*.log
+*.pid
+.env
