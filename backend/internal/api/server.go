@@ -83,6 +83,9 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("DELETE /api/v1/inner/categories/{id}", s.internal(s.deleteCategory))
 	mux.HandleFunc("POST /api/v1/inner/media", s.internal(s.uploadMedia))
 	mux.HandleFunc("GET /api/v1/inner/reviews", s.internal(s.listReviews))
+	mux.HandleFunc("GET /api/v1/inner/reviews/mine", s.internal(s.listMyReviews))
+	mux.HandleFunc("GET /api/v1/inner/reviews/notifications", s.internal(s.listReviewNotifications))
+	mux.HandleFunc("POST /api/v1/inner/reviews/notifications/read", s.internal(s.readReviewNotifications))
 	mux.HandleFunc("POST /api/v1/inner/reviews/{id}/approve", s.internal(s.approvePost))
 	mux.HandleFunc("POST /api/v1/inner/reviews/{id}/reject", s.internal(s.rejectPost))
 	mux.HandleFunc("GET /api/v1/inner/leaderboard", s.internal(s.leaderboard))
@@ -362,6 +365,18 @@ func (s *Server) listReviews(writer http.ResponseWriter, request *http.Request) 
 	result, err := s.blog.ListReviews(actor(request))
 	respond(writer, request, result, err)
 }
+func (s *Server) listMyReviews(writer http.ResponseWriter, request *http.Request) {
+	result, err := s.blog.ListMyReviews(actor(request))
+	respond(writer, request, result, err)
+}
+func (s *Server) listReviewNotifications(writer http.ResponseWriter, request *http.Request) {
+	result, err := s.blog.ListReviewNotifications(actor(request))
+	respond(writer, request, result, err)
+}
+func (s *Server) readReviewNotifications(writer http.ResponseWriter, request *http.Request) {
+	count, err := s.blog.MarkReviewNotificationsRead(actor(request))
+	respond(writer, request, map[string]int64{"read": count}, err)
+}
 func (s *Server) approvePost(writer http.ResponseWriter, request *http.Request) {
 	result, err := s.blog.ApprovePost(request.PathValue("id"), actor(request))
 	respond(writer, request, result, err)
@@ -477,6 +492,10 @@ func allowedImageType(value string) bool {
 
 func requiredPermission(request *http.Request) string {
 	if strings.HasPrefix(request.URL.Path, "/api/v1/reviews") {
+		switch request.URL.Path {
+		case "/api/v1/reviews/mine", "/api/v1/reviews/notifications", "/api/v1/reviews/notifications/read":
+			return blog.PermissionView
+		}
 		return blog.PermissionReview
 	}
 	if strings.HasPrefix(request.URL.Path, "/api/v1/categories") && request.Method != http.MethodGet {

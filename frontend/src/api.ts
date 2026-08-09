@@ -1,5 +1,5 @@
 import axios from 'axios'
-import type { Category, Comment, Dashboard, LeaderboardEntry, Media, Post, PostInput, PostPage, User } from '@/types'
+import type { Category, Comment, Dashboard, LeaderboardEntry, Media, Post, PostInput, PostPage, ReviewNotification, ReviewSubmission, User } from '@/types'
 import { toPostInput } from '@/utils/post'
 
 const baseURL = import.meta.env.VITE_BLOG_API_BASE_URL || '/api/v1'
@@ -38,6 +38,9 @@ export const blogApi = {
   deleteComment: (id: string) => unwrap<{ deleted: boolean }>(client.delete(`/comments/${id}`)),
   upload: (file: File) => { const data = new FormData(); data.append('file', file); return unwrap<Media>(client.post('/media', data, { headers: { 'Content-Type': 'multipart/form-data' } })) },
   reviews: () => unwrap<Post[]>(client.get('/reviews')),
+  myReviews: () => unwrap<ReviewSubmission[]>(client.get('/reviews/mine')),
+  reviewNotifications: () => unwrap<ReviewNotification[]>(client.get('/reviews/notifications')),
+  readReviewNotifications: () => unwrap<{ read: number }>(client.post('/reviews/notifications/read')),
   approve: (id: string) => unwrap<Post>(client.post(`/reviews/${id}/approve`)),
   reject: (id: string, note: string) => unwrap<Post>(client.post(`/reviews/${id}/reject`, { note })),
   leaderboard: () => unwrap<LeaderboardEntry[]>(client.get('/leaderboard')),

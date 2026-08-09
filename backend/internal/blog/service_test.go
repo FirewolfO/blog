@@ -61,6 +61,54 @@ func TestModeratedPostKeepsApprovedVersionVisible(t *testing.T) {
 	}
 }
 
+func TestAuthorReviewHistoryAndResultNotifications(t *testing.T) {
+	svc := newService(t)
+	author := user("author", "作者")
+	post, err := svc.CreatePost(author, PostInput{Title: "首次投稿", Content: "first", Status: model.PostPublished})
+	if err != nil {
+		t.Fatal(err)
+	}
+	history, err := svc.ListMyReviews(author)
+	if err != nil || len(history) != 1 || history[0].ReviewStatus != model.ReviewPending || history[0].SubmissionType != model.ReviewSubmissionNew {
+		t.Fatalf("pending history = %#v, %v", history, err)
+	}
+	if other, err := svc.ListMyReviews(user("other", "其他人")); err != nil || len(other) != 0 {
+		t.Fatalf("other history = %#v, %v", other, err)
+	}
+	if _, err := svc.ApprovePost(post.ID, reviewer()); err != nil {
+		t.Fatal(err)
+	}
+	notifications, err := svc.ListReviewNotifications(author)
+	if err != nil || len(notifications) != 1 || notifications[0].ReviewStatus != model.ReviewApproved || notifications[0].ReadAt != nil {
+		t.Fatalf("approval notifications = %#v, %v", notifications, err)
+	}
+	if _, err := svc.UpdatePost(post.ID, author, PostInput{Title: "修改投稿", Content: "second", Status: model.PostPublished}); err != nil {
+		t.Fatal(err)
+	}
+	history, err = svc.ListMyReviews(author)
+	if err != nil || len(history) != 2 || history[0].ReviewStatus != model.ReviewPending || history[0].SubmissionType != model.ReviewSubmissionRevision {
+		t.Fatalf("revision history = %#v, %v", history, err)
+	}
+	if _, err := svc.RejectPost(post.ID, reviewer(), "请补充迁移风险说明"); err != nil {
+		t.Fatal(err)
+	}
+	history, err = svc.ListMyReviews(author)
+	if err != nil || len(history) != 2 || history[0].ReviewStatus != model.ReviewRejected || history[0].ReviewNote != "请补充迁移风险说明" || history[0].ReviewedAt == nil {
+		t.Fatalf("rejected history = %#v, %v", history, err)
+	}
+	notifications, err = svc.ListReviewNotifications(author)
+	if err != nil || len(notifications) != 2 || notifications[0].ReviewStatus != model.ReviewRejected || notifications[0].ReviewNote != "请补充迁移风险说明" {
+		t.Fatalf("result notifications = %#v, %v", notifications, err)
+	}
+	if count, err := svc.MarkReviewNotificationsRead(author); err != nil || count != 2 {
+		t.Fatalf("MarkReviewNotificationsRead() = %d, %v", count, err)
+	}
+	notifications, err = svc.ListReviewNotifications(author)
+	if err != nil || notifications[0].ReadAt == nil || notifications[1].ReadAt == nil {
+		t.Fatalf("read notifications = %#v, %v", notifications, err)
+	}
+}
+
 func TestOwnershipCommentAndReviewerRules(t *testing.T) {
 	svc := newService(t)
 	author, stranger := user("author", "作者"), user("stranger", "路人")

@@ -11,6 +11,10 @@ const (
 	ReviewPending  = "pending"
 	ReviewApproved = "approved"
 	ReviewRejected = "rejected"
+	ReviewCanceled = "canceled"
+
+	ReviewSubmissionNew      = "new"
+	ReviewSubmissionRevision = "revision"
 )
 
 type Post struct {
@@ -63,6 +67,34 @@ type PostRevision struct {
 	CreatedAt     time.Time  `json:"createdAt"`
 	UpdatedAt     time.Time  `json:"updatedAt"`
 	Tags          []string   `gorm:"-" json:"tags"`
+}
+
+type ReviewSubmission struct {
+	ID             string     `gorm:"primaryKey;size:40" json:"id"`
+	PostID         string     `gorm:"size:40;index;not null" json:"postId"`
+	RevisionID     string     `gorm:"size:40;index" json:"revisionId,omitempty"`
+	Title          string     `gorm:"size:180;not null" json:"title"`
+	SubmissionType string     `gorm:"size:20;index;not null" json:"submissionType"`
+	SubmittedBy    string     `gorm:"size:80;index;not null" json:"submittedBy"`
+	SubmittedName  string     `gorm:"size:120;not null" json:"submittedName"`
+	ReviewStatus   string     `gorm:"size:20;index;not null" json:"reviewStatus"`
+	ReviewNote     string     `gorm:"size:500" json:"reviewNote,omitempty"`
+	ReviewedBy     string     `gorm:"size:80" json:"reviewedBy,omitempty"`
+	ReviewedAt     *time.Time `json:"reviewedAt,omitempty"`
+	CreatedAt      time.Time  `gorm:"index" json:"submittedAt"`
+	UpdatedAt      time.Time  `json:"updatedAt"`
+}
+
+type ReviewNotification struct {
+	ID                 string     `gorm:"primaryKey;size:40" json:"id"`
+	ReviewSubmissionID string     `gorm:"size:40;uniqueIndex;not null" json:"reviewSubmissionId"`
+	UserID             string     `gorm:"size:80;index;not null" json:"-"`
+	PostID             string     `gorm:"size:40;index;not null" json:"postId"`
+	Title              string     `gorm:"size:180;not null" json:"title"`
+	ReviewStatus       string     `gorm:"size:20;index;not null" json:"reviewStatus"`
+	ReviewNote         string     `gorm:"size:500" json:"reviewNote,omitempty"`
+	CreatedAt          time.Time  `gorm:"index" json:"createdAt"`
+	ReadAt             *time.Time `gorm:"index" json:"readAt,omitempty"`
 }
 
 type Category struct {

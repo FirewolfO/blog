@@ -5,12 +5,20 @@ const posts = [
   { id: 'p2', title: 'SQLite 索引设计笔记', slug: 'sqlite-indexes', excerpt: '用查询计划定位索引设计问题。', content: '# SQLite 索引设计', coverImageUrl: '', status: 'published', reviewStatus: 'approved', reviewNote: '', hasPendingChanges: false, categoryId: '', tags: ['SQLite'], authorId: 'u2', authorName: '周同学', publishedAt: '2026-08-07T10:00:00Z', createdAt: '2026-08-07T10:00:00Z', updatedAt: '2026-08-07T10:00:00Z', commentCount: 3, ratingCount: 7, ratingAverage: 4.6, myRating: 0, canEdit: false, canDelete: false, recommendationReason: '读者评分 4.6' },
 ]
 const comments = [{ id: 'c1', postId: 'p1', content: '很有帮助 👍', authorId: 'u3', authorName: '读者', createdAt: '2026-08-09T09:00:00Z', canDelete: false }]
+const reviews = [
+  { id: 'r2', postId: 'p2', revisionId: 'rev2', title: 'SQLite 索引设计笔记', submissionType: 'revision', submittedBy: 'viewer', submittedName: '视觉检查用户', reviewStatus: 'pending', reviewNote: '', reviewedBy: '', submittedAt: '2026-08-09T11:00:00Z' },
+  { id: 'r1', postId: 'p1', revisionId: '', title: 'Gateway 路由治理实践', submissionType: 'new', submittedBy: 'viewer', submittedName: '视觉检查用户', reviewStatus: 'rejected', reviewNote: '请补充故障回滚步骤后重新提交', reviewedBy: 'reviewer', reviewedAt: '2026-08-09T10:00:00Z', submittedAt: '2026-08-09T09:00:00Z' },
+]
 
 async function mockAPI(page: Page) {
   await page.addInitScript(() => sessionStorage.setItem('blog_access_token', 'visual-test-token'))
   await page.route('**/api/v1/**', async (route) => {
     const url = new URL(route.request().url()); let data: unknown
     if (url.pathname.endsWith('/auth/me')) data = { user: { id: 'viewer', username: 'viewer', displayName: '视觉检查用户', permissions: [] } }
+    else if (url.pathname.endsWith('/reviews/mine')) data = reviews
+    else if (url.pathname.endsWith('/reviews/notifications')) data = []
+    else if (url.pathname.endsWith('/reviews/notifications/read')) data = null
+    else if (url.pathname.endsWith('/reviews')) data = []
     else if (url.pathname.endsWith('/recommendations')) data = posts
     else if (/\/posts\/[^/]+\/comments$/.test(url.pathname)) data = comments
     else if (/\/posts\/[^/]+\/rating$/.test(url.pathname)) data = { stars: 5, ratingCount: 13, ratingAverage: 4.8 }
@@ -49,4 +57,15 @@ test('markdown editor fits on mobile', async ({ page }) => {
   await expect(page.getByPlaceholder('文章标题')).toBeVisible(); await expect(page.getByRole('button', { name: '提交审核' })).toBeVisible()
   expect(await page.evaluate(() => document.documentElement.scrollWidth <= document.documentElement.clientWidth)).toBe(true)
   await page.screenshot({ path: '/tmp/task7-editor-mobile.png', fullPage: true })
+})
+
+test('author can inspect own review results on mobile', async ({ page }) => {
+  await mockAPI(page); await page.setViewportSize({ width: 390, height: 844 }); await page.goto('http://127.0.0.1:5179/reviews')
+  await expect(page.getByRole('heading', { name: '我的审核记录' })).toBeVisible()
+  const mobileHistory = page.locator('.review-history-mobile')
+  await expect(mobileHistory.getByText('请补充故障回滚步骤后重新提交')).toBeVisible()
+  await expect(mobileHistory.getByText('审核中')).toBeVisible()
+  await expect(page.getByText('待我审核')).toHaveCount(0)
+  expect(await page.evaluate(() => document.documentElement.scrollWidth <= document.documentElement.clientWidth)).toBe(true)
+  await page.screenshot({ path: '/tmp/blog-review-history-mobile.png', fullPage: true })
 })

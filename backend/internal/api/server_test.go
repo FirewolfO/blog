@@ -15,6 +15,9 @@ func TestRequiredPermission(t *testing.T) {
 		{http.MethodPost, "/api/v1/posts", blog.PermissionView},
 		{http.MethodDelete, "/api/v1/comments/comment-1", blog.PermissionView},
 		{http.MethodPost, "/api/v1/categories", blog.PermissionManage},
+		{http.MethodGet, "/api/v1/reviews/mine", blog.PermissionView},
+		{http.MethodGet, "/api/v1/reviews/notifications", blog.PermissionView},
+		{http.MethodPost, "/api/v1/reviews/notifications/read", blog.PermissionView},
 		{http.MethodPost, "/api/v1/reviews/post-1/approve", blog.PermissionReview},
 	}
 	for _, test := range tests {

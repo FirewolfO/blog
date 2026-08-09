@@ -227,7 +227,15 @@ func (s *Service) CreatePost(actor Identity, input PostInput) (*model.Post, erro
 			post.PublishedAt = nil
 		}
 	}
-	if err := s.store.DB.Create(post).Error; err != nil {
+	if err := s.store.DB.Transaction(func(tx *gorm.DB) error {
+		if err := tx.Create(post).Error; err != nil {
+			return err
+		}
+		if post.ReviewStatus == model.ReviewPending {
+			return s.upsertPendingReview(tx, post, nil)
+		}
+		return nil
+	}); err != nil {
 		return nil, err
 	}
 	return s.GetPost(actor, post.ID)
@@ -253,18 +261,23 @@ func (s *Service) UpdatePost(id string, actor Identity, input PostInput) (*model
 	}
 	if !actor.IsAdmin() && current.Status == model.PostPublished && current.ReviewStatus == model.ReviewApproved && input.Status != model.PostArchived {
 		revision := revisionFromPost(current.ID, actor, updated)
-		if current.PendingRevisionID != "" {
-			revision.ID = current.PendingRevisionID
-			if err := s.store.DB.Where("id = ?", revision.ID).Assign(revision).FirstOrCreate(revision).Error; err != nil {
-				return nil, err
+		if err := s.store.DB.Transaction(func(tx *gorm.DB) error {
+			if current.PendingRevisionID != "" {
+				revision.ID = current.PendingRevisionID
+				if err := tx.Where("id = ?", revision.ID).Assign(revision).FirstOrCreate(revision).Error; err != nil {
+					return err
+				}
+			} else {
+				revision.ID = newID("revision")
+				if err := tx.Create(revision).Error; err != nil {
+					return err
+				}
 			}
-		} else {
-			revision.ID = newID("revision")
-			if err := s.store.DB.Create(revision).Error; err != nil {
-				return nil, err
+			if err := tx.Model(&model.Post{}).Where("id = ?", id).Updates(map[string]any{"pending_revision_id": revision.ID, "review_note": ""}).Error; err != nil {
+				return err
 			}
-		}
-		if err := s.store.DB.Model(&model.Post{}).Where("id = ?", id).Updates(map[string]any{"pending_revision_id": revision.ID, "review_note": ""}).Error; err != nil {
+			return s.upsertPendingReview(tx, current, revision)
+		}); err != nil {
 			return nil, err
 		}
 		return s.GetPost(actor, id)
@@ -285,7 +298,15 @@ func (s *Service) UpdatePost(id string, actor Identity, input PostInput) (*model
 	values["review_note"] = ""
 	values["published_at"] = publishedAt
 	values["pending_revision_id"] = ""
-	if err := s.store.DB.Model(&model.Post{}).Where("id = ?", id).Updates(values).Error; err != nil {
+	if err := s.store.DB.Transaction(func(tx *gorm.DB) error {
+		if err := tx.Model(&model.Post{}).Where("id = ?", id).Updates(values).Error; err != nil {
+			return err
+		}
+		if reviewStatus == model.ReviewPending {
+			return s.upsertPendingReview(tx, updated, nil)
+		}
+		return s.cancelPendingReview(tx, id, "")
+	}); err != nil {
 		return nil, err
 	}
 	return s.GetPost(actor, id)
@@ -311,7 +332,15 @@ func (s *Service) PublishPost(id string, actor Identity) (*model.Post, error) {
 		values["review_status"] = model.ReviewPending
 		values["published_at"] = nil
 	}
-	if err := s.store.DB.Model(&model.Post{}).Where("id = ?", id).Updates(values).Error; err != nil {
+	if err := s.store.DB.Transaction(func(tx *gorm.DB) error {
+		if err := tx.Model(&model.Post{}).Where("id = ?", id).Updates(values).Error; err != nil {
+			return err
+		}
+		if !actor.IsAdmin() {
+			return s.upsertPendingReview(tx, post, nil)
+		}
+		return nil
+	}); err != nil {
 		return nil, err
 	}
 	return s.GetPost(actor, id)
@@ -333,6 +362,59 @@ func (s *Service) ListReviews(actor Identity) ([]model.Post, error) {
 		}
 	}
 	return result, nil
+}
+
+func (s *Service) ListMyReviews(actor Identity) ([]model.ReviewSubmission, error) {
+	items := []model.ReviewSubmission{}
+	if err := s.store.DB.Where("submitted_by = ?", actor.ID).Order("created_at DESC").Find(&items).Error; err != nil {
+		return nil, err
+	}
+	initialPosts, revisions := map[string]bool{}, map[string]bool{}
+	for _, item := range items {
+		if item.RevisionID == "" {
+			initialPosts[item.PostID] = true
+		} else {
+			revisions[item.RevisionID] = true
+		}
+	}
+	var posts []model.Post
+	if err := s.store.DB.Where("author_id = ? AND review_status <> ?", actor.ID, model.ReviewDraft).Find(&posts).Error; err != nil {
+		return nil, err
+	}
+	for _, post := range posts {
+		if initialPosts[post.ID] {
+			continue
+		}
+		item := model.ReviewSubmission{ID: "legacy-" + post.ID, PostID: post.ID, Title: post.Title, SubmissionType: model.ReviewSubmissionNew, SubmittedBy: post.AuthorID, SubmittedName: post.AuthorName, ReviewStatus: post.ReviewStatus, ReviewNote: post.ReviewNote, CreatedAt: post.CreatedAt, UpdatedAt: post.UpdatedAt}
+		if post.ReviewStatus == model.ReviewApproved || post.ReviewStatus == model.ReviewRejected {
+			reviewedAt := post.UpdatedAt
+			item.ReviewedAt = &reviewedAt
+		}
+		items = append(items, item)
+	}
+	var storedRevisions []model.PostRevision
+	if err := s.store.DB.Where("submitted_by = ?", actor.ID).Find(&storedRevisions).Error; err != nil {
+		return nil, err
+	}
+	for _, revision := range storedRevisions {
+		if revisions[revision.ID] {
+			continue
+		}
+		items = append(items, model.ReviewSubmission{ID: "legacy-" + revision.ID, PostID: revision.PostID, RevisionID: revision.ID, Title: revision.Title, SubmissionType: model.ReviewSubmissionRevision, SubmittedBy: revision.SubmittedBy, SubmittedName: revision.SubmittedName, ReviewStatus: revision.ReviewStatus, ReviewNote: revision.ReviewNote, ReviewedBy: revision.ReviewedBy, ReviewedAt: revision.ReviewedAt, CreatedAt: revision.CreatedAt, UpdatedAt: revision.UpdatedAt})
+	}
+	sort.SliceStable(items, func(i, j int) bool { return items[i].CreatedAt.After(items[j].CreatedAt) })
+	return items, nil
+}
+
+func (s *Service) ListReviewNotifications(actor Identity) ([]model.ReviewNotification, error) {
+	items := []model.ReviewNotification{}
+	return items, s.store.DB.Where("user_id = ?", actor.ID).Order("created_at DESC").Limit(100).Find(&items).Error
+}
+
+func (s *Service) MarkReviewNotificationsRead(actor Identity) (int64, error) {
+	now := time.Now().UTC()
+	result := s.store.DB.Model(&model.ReviewNotification{}).Where("user_id = ? AND read_at IS NULL", actor.ID).Update("read_at", &now)
+	return result.RowsAffected, result.Error
 }
 
 func (s *Service) ApprovePost(id string, actor Identity) (*model.Post, error) {
@@ -364,7 +446,10 @@ func (s *Service) ApprovePost(id string, actor Identity) (*model.Post, error) {
 			if err := tx.Model(&model.Post{}).Where("id = ?", id).Updates(values).Error; err != nil {
 				return err
 			}
-			return tx.Model(&revision).Updates(map[string]any{"review_status": model.ReviewApproved, "reviewed_by": actor.ID, "reviewed_at": &now, "review_note": ""}).Error
+			if err := tx.Model(&revision).Updates(map[string]any{"review_status": model.ReviewApproved, "reviewed_by": actor.ID, "reviewed_at": &now, "review_note": ""}).Error; err != nil {
+				return err
+			}
+			return s.completeReview(tx, post, &revision, model.ReviewApproved, "", actor, now)
 		}
 		if post.ReviewStatus != model.ReviewPending {
 			return ErrConflict
@@ -373,7 +458,10 @@ func (s *Service) ApprovePost(id string, actor Identity) (*model.Post, error) {
 		if post.Status == model.PostPublished {
 			values["published_at"] = &now
 		}
-		return tx.Model(post).Updates(values).Error
+		if err := tx.Model(post).Updates(values).Error; err != nil {
+			return err
+		}
+		return s.completeReview(tx, post, nil, model.ReviewApproved, "", actor, now)
 	})
 	if err != nil {
 		return nil, err
@@ -394,21 +482,29 @@ func (s *Service) RejectPost(id string, actor Identity, note string) (*model.Pos
 		return nil, err
 	}
 	now := time.Now().UTC()
-	if post.PendingRevisionID != "" {
-		var revision model.PostRevision
-		if err := s.store.DB.Where("id = ? AND review_status = ?", post.PendingRevisionID, model.ReviewPending).First(&revision).Error; err != nil {
-			return nil, ErrConflict
+	err = s.store.DB.Transaction(func(tx *gorm.DB) error {
+		if post.PendingRevisionID != "" {
+			var revision model.PostRevision
+			if err := tx.Where("id = ? AND review_status = ?", post.PendingRevisionID, model.ReviewPending).First(&revision).Error; err != nil {
+				return ErrConflict
+			}
+			if err := tx.Model(&revision).Updates(map[string]any{"review_status": model.ReviewRejected, "reviewed_by": actor.ID, "reviewed_at": &now, "review_note": note}).Error; err != nil {
+				return err
+			}
+			if err := tx.Model(post).Update("review_note", note).Error; err != nil {
+				return err
+			}
+			return s.completeReview(tx, post, &revision, model.ReviewRejected, note, actor, now)
 		}
-		if err := s.store.DB.Model(&revision).Updates(map[string]any{"review_status": model.ReviewRejected, "reviewed_by": actor.ID, "reviewed_at": &now, "review_note": note}).Error; err != nil {
-			return nil, err
+		if post.ReviewStatus != model.ReviewPending {
+			return ErrConflict
 		}
-		_ = s.store.DB.Model(post).Update("review_note", note).Error
-		return s.GetPost(actor, id)
-	}
-	if post.ReviewStatus != model.ReviewPending {
-		return nil, ErrConflict
-	}
-	if err := s.store.DB.Model(post).Updates(map[string]any{"review_status": model.ReviewRejected, "review_note": note}).Error; err != nil {
+		if err := tx.Model(post).Updates(map[string]any{"review_status": model.ReviewRejected, "review_note": note}).Error; err != nil {
+			return err
+		}
+		return s.completeReview(tx, post, nil, model.ReviewRejected, note, actor, now)
+	})
+	if err != nil {
 		return nil, err
 	}
 	return s.GetPost(actor, id)
@@ -423,7 +519,7 @@ func (s *Service) DeletePost(id string, actor Identity) error {
 		return ErrForbidden
 	}
 	return s.store.DB.Transaction(func(tx *gorm.DB) error {
-		for _, target := range []any{&model.Comment{}, &model.Rating{}, &model.PostRevision{}} {
+		for _, target := range []any{&model.Comment{}, &model.Rating{}, &model.ReviewNotification{}, &model.ReviewSubmission{}, &model.PostRevision{}} {
 			if err := tx.Where("post_id = ?", id).Delete(target).Error; err != nil {
 				return err
 			}
@@ -727,6 +823,56 @@ func overlayRevision(post *model.Post, revision *model.PostRevision) {
 }
 func revisionFromPost(postID string, actor Identity, post *model.Post) *model.PostRevision {
 	return &model.PostRevision{PostID: postID, Title: post.Title, Slug: post.Slug, Excerpt: post.Excerpt, Content: post.Content, CoverImageURL: post.CoverImageURL, Status: post.Status, CategoryID: post.CategoryID, TagsJSON: post.TagsJSON, SubmittedBy: actor.ID, SubmittedName: identityName(actor), ReviewStatus: model.ReviewPending}
+}
+
+func (s *Service) upsertPendingReview(tx *gorm.DB, post *model.Post, revision *model.PostRevision) error {
+	item := model.ReviewSubmission{PostID: post.ID, Title: post.Title, SubmissionType: model.ReviewSubmissionNew, SubmittedBy: post.AuthorID, SubmittedName: post.AuthorName, ReviewStatus: model.ReviewPending}
+	if revision != nil {
+		item.RevisionID = revision.ID
+		item.Title = revision.Title
+		item.SubmissionType = model.ReviewSubmissionRevision
+		item.SubmittedBy = revision.SubmittedBy
+		item.SubmittedName = revision.SubmittedName
+	}
+	var current model.ReviewSubmission
+	err := tx.Where("post_id = ? AND revision_id = ? AND review_status = ?", item.PostID, item.RevisionID, model.ReviewPending).Order("created_at DESC").First(&current).Error
+	if err == nil {
+		return tx.Model(&current).Updates(map[string]any{"title": item.Title, "submitted_by": item.SubmittedBy, "submitted_name": item.SubmittedName}).Error
+	}
+	if !errors.Is(err, gorm.ErrRecordNotFound) {
+		return err
+	}
+	item.ID = newID("review")
+	return tx.Create(&item).Error
+}
+
+func (s *Service) cancelPendingReview(tx *gorm.DB, postID, revisionID string) error {
+	return tx.Model(&model.ReviewSubmission{}).Where("post_id = ? AND revision_id = ? AND review_status = ?", postID, revisionID, model.ReviewPending).Update("review_status", model.ReviewCanceled).Error
+}
+
+func (s *Service) completeReview(tx *gorm.DB, post *model.Post, revision *model.PostRevision, status, note string, reviewer Identity, reviewedAt time.Time) error {
+	revisionID := ""
+	title, submittedBy, submittedName, submissionType := post.Title, post.AuthorID, post.AuthorName, model.ReviewSubmissionNew
+	if revision != nil {
+		revisionID = revision.ID
+		title, submittedBy, submittedName, submissionType = revision.Title, revision.SubmittedBy, revision.SubmittedName, model.ReviewSubmissionRevision
+	}
+	var submission model.ReviewSubmission
+	err := tx.Where("post_id = ? AND revision_id = ? AND review_status = ?", post.ID, revisionID, model.ReviewPending).Order("created_at DESC").First(&submission).Error
+	if errors.Is(err, gorm.ErrRecordNotFound) {
+		submission = model.ReviewSubmission{ID: newID("review"), PostID: post.ID, RevisionID: revisionID, Title: title, SubmissionType: submissionType, SubmittedBy: submittedBy, SubmittedName: submittedName, ReviewStatus: status, ReviewNote: note, ReviewedBy: reviewer.ID, ReviewedAt: &reviewedAt}
+		if err := tx.Create(&submission).Error; err != nil {
+			return err
+		}
+	} else if err != nil {
+		return err
+	} else {
+		if err := tx.Model(&submission).Updates(map[string]any{"title": title, "review_status": status, "review_note": note, "reviewed_by": reviewer.ID, "reviewed_at": &reviewedAt}).Error; err != nil {
+			return err
+		}
+	}
+	notification := model.ReviewNotification{ID: newID("notification"), ReviewSubmissionID: submission.ID, UserID: submittedBy, PostID: post.ID, Title: title, ReviewStatus: status, ReviewNote: note}
+	return tx.Clauses(clause.OnConflict{Columns: []clause.Column{{Name: "review_submission_id"}}, DoNothing: true}).Create(&notification).Error
 }
 func postValues(post *model.Post) map[string]any {
 	return map[string]any{"title": post.Title, "slug": post.Slug, "excerpt": post.Excerpt, "content": post.Content, "cover_image_url": post.CoverImageURL, "status": post.Status, "category_id": post.CategoryID, "tags": post.TagsJSON}
