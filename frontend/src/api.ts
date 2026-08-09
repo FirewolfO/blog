@@ -1,5 +1,6 @@
 import axios from 'axios'
 import type { Category, Comment, Dashboard, LeaderboardEntry, Media, Post, PostInput, PostPage, User } from '@/types'
+import { toPostInput } from '@/utils/post'
 
 const baseURL = import.meta.env.VITE_BLOG_API_BASE_URL || '/api/v1'
 const tokenKey = 'blog_access_token'
@@ -23,8 +24,8 @@ export const blogApi = {
   dashboard: () => unwrap<Dashboard>(client.get('/dashboard')),
   posts: (params: Record<string, string | number>) => unwrap<PostPage>(client.get('/posts', { params })),
   post: (id: string) => unwrap<Post>(client.get(`/posts/${id}`)),
-  createPost: (input: PostInput) => unwrap<Post>(client.post('/posts', input)),
-  updatePost: (id: string, input: PostInput) => unwrap<Post>(client.put(`/posts/${id}`, input)),
+  createPost: (input: PostInput) => unwrap<Post>(client.post('/posts', toPostInput(input))),
+  updatePost: (id: string, input: PostInput) => unwrap<Post>(client.put(`/posts/${id}`, toPostInput(input))),
   publishPost: (id: string) => unwrap<Post>(client.post(`/posts/${id}/publish`)),
   deletePost: (id: string) => unwrap<{ deleted: boolean }>(client.delete(`/posts/${id}`)),
   ratePost: (id: string, stars: number) => unwrap<{ stars: number; ratingCount: number; ratingAverage: number }>(client.post(`/posts/${id}/rating`, { stars })),
